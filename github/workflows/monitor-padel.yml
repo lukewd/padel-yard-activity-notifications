@@ -1,0 +1,38 @@
+name: Monitor Padel Classes
+
+on:
+  schedule:
+    # Runs every 30 minutes
+    - cron: '*/30 * * * *'
+  workflow_dispatch: # Allows manual triggering from GitHub UI
+
+jobs:
+  check-availability:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+    
+    - name: Install dependencies
+      run: |
+        npm install axios cheerio
+    
+    - name: Check for new dates
+      env:
+        IFTTT_WEBHOOK_KEY: ${{ secrets.IFTTT_WEBHOOK_KEY }}
+        IFTTT_EVENT_NAME: ${{ secrets.IFTTT_EVENT_NAME }}
+      run: node check-padel.js
+      
+    - name: Commit updated dates file
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add known-dates.json || true
+        git diff --quiet && git diff --staged --quiet || git commit -m "Update known dates [skip ci]"
+        git push || true
