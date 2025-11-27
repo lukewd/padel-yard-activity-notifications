@@ -1,1 +1,11 @@
-
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0">
+<channel>
+ <title>Padel Availability Monitor</title>
+ <description>Updates for Oscar Marhuenda Classes</description>
+ <link>https://www.matchi.se/facilities/g4pthepadelyard?date=&sport=</link>
+ <lastBuildDate>Thu, 27 Nov 2025 14:30:16 +0000</lastBuildDate>
+ <pubDate>Thu, 27 Nov 2025 14:30:16 +0000</pubDate>
+ <ttl>60</ttl>
+</channel>
+</rss>
