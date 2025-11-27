@@ -4,10 +4,13 @@ import json
 import os
 import datetime
 import sys
+import urllib3
+
+# Suppress the "InsecureRequest" warnings from the Proxy
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- CONFIGURATION ---
 URL = "https://www.matchi.se/facilities/g4pthepadelyard" 
-# The specific anchor tags you identified
 TARGET_ANCHORS = [
     "ClassActivity-130961", 
     "ClassActivity-130975", 
@@ -54,50 +57,65 @@ def get_current_slots():
     soup = BeautifulSoup(response.text, 'html.parser')
     found_slots = set()
     
-    print("--- Scanning for Target Anchors ---")
+    print("--- Parsing HTML Tables ---")
     
-    # Iterate through each specific ID you provided
     for anchor_id in TARGET_ANCHORS:
-        # Find the <a name="ClassActivity-..."> tag
+        # 1. Find the Anchor Tag
         anchor = soup.find("a", attrs={"name": anchor_id})
         
         if anchor:
             print(f"🎯 Found Anchor: {anchor_id}")
             
-            # In Matchi, the content is usually in the DIV immediately following the anchor
-            # We look for the next 'div' with class 'panel'
-            container = anchor.find_next("div", class_="panel")
+            # 2. Find the container ROW immediately following the anchor
+            container_row = anchor.find_next("div", class_="row")
             
-            if container:
-                # Get the title to verify (optional, helps debugging)
-                title = container.find("h3") or container.find("h4")
-                title_text = title.text.strip() if title else "Unknown Title"
-                print(f"   -> Processing Container: '{title_text}'")
+            if container_row:
+                # Get the Title (usually in an h4 tag inside this row)
+                title_tag = container_row.find("h4")
+                title_text = title_tag.get_text(strip=True) if title_tag else "Activity"
+                print(f"   -> Activity Title: '{title_text}'")
+
+                # 3. Find the Table inside this row
+                table = container_row.find("table", class_="activity-occasions")
                 
-                # Scan all text in this container for dates
-                lines = container.get_text(separator="|").split("|")
-                for line in lines:
-                    clean_line = line.strip()
-                    # Filter for date patterns
-                    if "2025-" in clean_line or "2024-" in clean_line:
-                        # Construct a unique string including the ID so we know which class it belongs to
-                        slot_info = f"{clean_line} [{title_text}]"
-                        print(f"      -> Found Slot: {clean_line}")
-                        found_slots.add(slot_info)
+                if table:
+                    # 4. Find all rows (tr) - including hidden ones
+                    rows = table.find_all("tr", class_="activity-occasion")
+                    print(f"   -> Found {len(rows)} rows in table.")
+                    
+                    for row in rows:
+                        # Extract Date (in <small>) and Time (in <strong>)
+                        date_tag = row.find("small")
+                        time_tag = row.find("strong")
+                        
+                        if date_tag and time_tag:
+                            date_str = date_tag.get_text(strip=True)
+                            time_str = time_tag.get_text(strip=True)
+                            
+                            # Clean up strings
+                            full_slot = f"{date_str} @ {time_str}"
+                            
+                            # Optional: Check if it's bookable (look for 'Book' text or waitlist)
+                            # For now, we capture ALL dates that appear, as you want to know when dates are added.
+                            unique_id = f"{full_slot} [{title_text}]"
+                            
+                            print(f"      -> Found Slot: {unique_id}")
+                            found_slots.add(unique_id)
+                else:
+                    print("   ⚠️ No table found in this activity row.")
             else:
-                print(f"   ⚠️ Anchor found, but no 'panel' div followed it.")
+                print("   ⚠️ Anchor found, but no 'row' div followed it.")
         else:
-            # This is normal if one of the specific classes isn't listed right now
             print(f"   ℹ️ Anchor {anchor_id} not found on page.")
 
     return found_slots
 
 def update_files(new_slots, all_current_slots):
-    # Update JSON
+    # Update JSON State
     with open(STATE_FILE, 'w') as f:
         json.dump(list(all_current_slots), f)
     
-    # Update RSS
+    # Update RSS Feed
     rss_header = f"""<?xml version="1.0" encoding="UTF-8" ?>
 <rss version="2.0">
 <channel>
@@ -114,11 +132,11 @@ def update_files(new_slots, all_current_slots):
     if new_slots:
         timestamp = datetime.datetime.now(datetime.timezone.utc).strftime('%a, %d %b %Y %H:%M:%S +0000')
         guid = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
-        description_html = "<h3>New Slots:</h3><ul>" + "".join([f"<li>{s}</li>" for s in new_slots]) + "</ul>"
+        description_html = "<h3>New Slots Added:</h3><ul>" + "".join([f"<li>{s}</li>" for s in new_slots]) + "</ul>"
         
         new_item = f"""
  <item>
-  <title>🎾 {len(new_slots)} Slots Found!</title>
+  <title>🎾 {len(new_slots)} New Slots Found!</title>
   <description><![CDATA[{description_html} <br/> <a href="{URL}">Book Now</a>]]></description>
   <link>{URL}</link>
   <guid isPermaLink="false">{guid}</guid>
@@ -142,9 +160,10 @@ def update_files(new_slots, all_current_slots):
     print("💾 Files saved.")
 
 def main():
-    print("--- Starting Padel Monitor (Anchor Method) ---")
+    print("--- Starting Padel Monitor (Table Method) ---")
     current_slots = get_current_slots()
     
+    # Load previously seen
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, 'r') as f:
             try:
