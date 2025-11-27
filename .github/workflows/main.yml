@@ -2,7 +2,7 @@ name: Update Padel RSS
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '0 */3 * * *'
   workflow_dispatch:
 
 permissions:
@@ -22,9 +22,16 @@ jobs:
           python-version: '3.9'
 
       - name: Install dependencies
-        run: pip install cloudscraper beautifulsoup4
+        # We go back to 'requests' because the Proxy is doing the hard work now
+        run: pip install requests beautifulsoup4
 
       - name: Run Feed Generator
+        # We inject the secrets here so Python can read them
+        env:
+          BRIGHTDATA_HOST: ${{ secrets.BRIGHTDATA_HOST }}
+          BRIGHTDATA_PORT: ${{ secrets.BRIGHTDATA_PORT }}
+          BRIGHTDATA_USERNAME: ${{ secrets.BRIGHTDATA_USERNAME }}
+          BRIGHTDATA_PASSWORD: ${{ secrets.BRIGHTDATA_PASSWORD }}
         run: python feed_generator.py
 
       - name: Commit and Push
