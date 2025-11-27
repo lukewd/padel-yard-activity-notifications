@@ -22,7 +22,7 @@ jobs:
           python-version: '3.9'
 
       - name: Install dependencies
-        run: pip install requests beautifulsoup4
+        run: pip install cloudscraper beautifulsoup4
 
       - name: Run Feed Generator
         run: python feed_generator.py
