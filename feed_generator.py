@@ -6,11 +6,11 @@ import datetime
 import html
 
 # --- CONFIGURATION ---
-URL = "https://www.matchi.se/facilities/g4pthepadelyard?date=&sport="
+URL = "https://www.matchi.se/facilities/g4pthepadelyard?date=&sport=#ClassActivity-130961"
 TARGET_ACTIVITY = "Master Class With Oscar Marhuenda - Intermediate"
 STATE_FILE = "seen_dates.json"
 FEED_FILE = "feed.xml"
-REPO_URL = "https://yourusername.github.io/padel-monitor" # We will set this up later
+REPO_URL = "https://lukewd.github.io/padel-yard-activity-notifications" # We will set this up later
 
 def get_current_slots():
     try:
