@@ -5,6 +5,7 @@ import os
 import datetime
 import sys
 import urllib3
+import hashlib
 
 # Suppress the "InsecureRequest" warnings from the Proxy
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -60,31 +61,26 @@ def get_current_slots():
     print("--- Parsing HTML Tables ---")
     
     for anchor_id in TARGET_ANCHORS:
-        # 1. Find the Anchor Tag
+        # Find the Anchor Tag
         anchor = soup.find("a", attrs={"name": anchor_id})
         
         if anchor:
-            print(f"🎯 Found Anchor: {anchor_id}")
-            
-            # 2. Find the container ROW immediately following the anchor
+            # Find the container ROW immediately following the anchor
             container_row = anchor.find_next("div", class_="row")
             
             if container_row:
-                # Get the Title (usually in an h4 tag inside this row)
+                # Get the Title
                 title_tag = container_row.find("h4")
                 title_text = title_tag.get_text(strip=True) if title_tag else "Activity"
-                print(f"   -> Activity Title: '{title_text}'")
 
-                # 3. Find the Table inside this row
+                # Find the Table inside this row
                 table = container_row.find("table", class_="activity-occasions")
                 
                 if table:
-                    # 4. Find all rows (tr) - including hidden ones
+                    # Find all rows (tr)
                     rows = table.find_all("tr", class_="activity-occasion")
-                    print(f"   -> Found {len(rows)} rows in table.")
                     
                     for row in rows:
-                        # Extract Date (in <small>) and Time (in <strong>)
                         date_tag = row.find("small")
                         time_tag = row.find("strong")
                         
@@ -92,30 +88,22 @@ def get_current_slots():
                             date_str = date_tag.get_text(strip=True)
                             time_str = time_tag.get_text(strip=True)
                             
-                            # Clean up strings
+                            # Clean string for the slot
                             full_slot = f"{date_str} @ {time_str}"
-                            
-                            # Optional: Check if it's bookable (look for 'Book' text or waitlist)
-                            # For now, we capture ALL dates that appear, as you want to know when dates are added.
+                            # Unique ID includes the class title so we know which class it is
                             unique_id = f"{full_slot} [{title_text}]"
                             
-                            print(f"      -> Found Slot: {unique_id}")
                             found_slots.add(unique_id)
-                else:
-                    print("   ⚠️ No table found in this activity row.")
-            else:
-                print("   ⚠️ Anchor found, but no 'row' div followed it.")
-        else:
-            print(f"   ℹ️ Anchor {anchor_id} not found on page.")
-
+    
+    print(f"   -> Total slots found on page: {len(found_slots)}")
     return found_slots
 
 def update_files(new_slots, all_current_slots):
-    # Update JSON State
+    # 1. Update JSON State (Memory)
     with open(STATE_FILE, 'w') as f:
         json.dump(list(all_current_slots), f)
     
-    # Update RSS Feed
+    # 2. Prepare RSS Header
     rss_header = f"""<?xml version="1.0" encoding="UTF-8" ?>
 <rss version="2.0">
 <channel>
@@ -124,25 +112,32 @@ def update_files(new_slots, all_current_slots):
  <link>{URL}</link>
  <lastBuildDate>{datetime.datetime.now(datetime.timezone.utc).strftime('%a, %d %b %Y %H:%M:%S +0000')}</lastBuildDate>
  <pubDate>{datetime.datetime.now(datetime.timezone.utc).strftime('%a, %d %b %Y %H:%M:%S +0000')}</pubDate>
- <ttl>60</ttl>"""
+ <ttl>15</ttl>"""
     
     rss_footer = "\n</channel>\n</rss>"
     
-    new_item = ""
+    # 3. Create ONE Summary Item if there are new slots
+    new_item_block = ""
     if new_slots:
         timestamp = datetime.datetime.now(datetime.timezone.utc).strftime('%a, %d %b %Y %H:%M:%S +0000')
+        # Create a unique ID for this BATCH of updates
         guid = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
-        description_html = "<h3>New Slots Added:</h3><ul>" + "".join([f"<li>{s}</li>" for s in new_slots]) + "</ul>"
         
-        new_item = f"""
+        # Build the HTML list for the email body
+        # We sort them so the email looks tidy
+        sorted_slots = sorted(list(new_slots))
+        description_html = "<h3>New Dates Added!</h3><ul>" + "".join([f"<li>{s}</li>" for s in sorted_slots]) + "</ul>"
+        
+        new_item_block = f"""
  <item>
-  <title>🎾 {len(new_slots)} New Slots Found!</title>
+  <title>🎾 {len(new_slots)} New Slots Available!</title>
   <description><![CDATA[{description_html} <br/> <a href="{URL}">Book Now</a>]]></description>
   <link>{URL}</link>
   <guid isPermaLink="false">{guid}</guid>
   <pubDate>{timestamp}</pubDate>
  </item>"""
 
+    # 4. Read old items to keep history
     old_items = ""
     if os.path.exists(FEED_FILE):
         with open(FEED_FILE, 'r', encoding='utf-8') as f:
@@ -152,15 +147,16 @@ def update_files(new_slots, all_current_slots):
                 end = content.rfind("</item>") + 7
                 old_items = content[start:end]
 
-    final_items = (new_item + "\n" + old_items) if new_item else old_items
+    # Combine
+    final_content = rss_header + new_item_block + "\n" + old_items + rss_footer
 
     with open(FEED_FILE, 'w', encoding='utf-8') as f:
-        f.write(rss_header + final_items + rss_footer)
+        f.write(final_content)
     
-    print("💾 Files saved.")
+    print("💾 Files saved (Summary Mode).")
 
 def main():
-    print("--- Starting Padel Monitor (Table Method) ---")
+    print("--- Starting Padel Monitor ---")
     current_slots = get_current_slots()
     
     # Load previously seen
@@ -180,9 +176,9 @@ def main():
         update_files(new_slots, current_slots)
     else:
         print("ℹ️ No new slots found.")
-        # Ensure feed exists on first run
+        # Create the file purely for initialization if it's missing
         if not os.path.exists(FEED_FILE):
-             update_files(new_slots, current_slots)
+             update_files(set(), current_slots)
 
 if __name__ == "__main__":
     main()
