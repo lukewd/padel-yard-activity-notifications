@@ -2,7 +2,7 @@ name: Update Padel RSS
 
 on:
   schedule:
-    - cron: '*/15 * * * *' # Runs every 15 minutes
+    - cron: '*/15 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -27,7 +27,7 @@ jobs:
       - name: Run Feed Generator
         run: python feed_generator.py
 
-- name: Commit and Push
+      - name: Commit and Push
         run: |
           git config --global user.name 'PadelBot'
           git config --global user.email 'actions@github.com'
