@@ -1,6 +1,19 @@
+name: Update Padel RSS
+
+on:
+  schedule:
+    # Runs every 15 minutes. 
+    # You can change '15' to '60' if you want hourly.
+    - cron: '*/15 * * * *'
+  workflow_dispatch: # Allows manual trigger button
+
+permissions:
+  contents: write
+
 jobs:
   update_feed:
     runs-on: ubuntu-latest
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -14,12 +27,15 @@ jobs:
         run: pip install requests beautifulsoup4
 
       - name: Run Feed Generator
+        # This runs your python script to check dates
         run: python feed_generator.py
 
       - name: Commit and Push
+        # This saves the feed.xml and seen_dates.json back to the repo
         run: |
           git config --global user.name 'PadelBot'
           git config --global user.email 'actions@github.com'
           git add feed.xml seen_dates.json
-          # The important change is below: HEAD:main ensures we push to the correct branch
+          # The logic below checks if files changed before trying to commit
+          # 'origin HEAD:main' ensures we push to the main branch correctly
           git diff --quiet && git diff --staged --quiet || (git commit -m "Update RSS feed [skip ci]" && git push origin HEAD:main)
