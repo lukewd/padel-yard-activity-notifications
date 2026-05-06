@@ -11,22 +11,20 @@ permissions:
 jobs:
   update_feed:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.12'
 
       - name: Install dependencies
-        # We go back to 'requests' because the Proxy is doing the hard work now
         run: pip install requests beautifulsoup4
 
       - name: Run Feed Generator
-        # We inject the secrets here so Python can read them
         env:
           BRIGHTDATA_HOST: ${{ secrets.BRIGHTDATA_HOST }}
           BRIGHTDATA_PORT: ${{ secrets.BRIGHTDATA_PORT }}
@@ -39,4 +37,4 @@ jobs:
           git config --global user.name 'PadelBot'
           git config --global user.email 'actions@github.com'
           git add .
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update RSS feed [skip ci]" && git push origin HEAD:main)
+          git diff --quiet && git diff --staged --quiet || (git pull --rebase origin main && git commit -m "Update RSS feed [skip ci]" && git push origin HEAD:main)

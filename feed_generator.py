@@ -5,7 +5,6 @@ import os
 import datetime
 import sys
 import urllib3
-import hashlib
 
 # Suppress the "InsecureRequest" warnings from the Proxy
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -34,9 +33,10 @@ def get_proxies():
     return {"http": proxy_url, "https": proxy_url}
 
 def get_current_slots():
+    """Returns a set of slot strings, or None if the fetch failed."""
     print(f"🔎 Visiting {URL}...")
     proxies = get_proxies()
-    
+
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9"
@@ -48,12 +48,12 @@ def get_current_slots():
             response = requests.get(URL, headers=headers, proxies=proxies, timeout=30, verify=False)
         else:
             response = requests.get(URL, headers=headers, timeout=30)
-        
+
         response.raise_for_status()
         print("✅ Page loaded successfully.")
     except Exception as e:
         print(f"❌ Error fetching page: {e}")
-        return set()
+        return None
 
     soup = BeautifulSoup(response.text, 'html.parser')
     found_slots = set()
@@ -157,14 +157,29 @@ def update_files(new_slots, all_current_slots):
 
 def main():
     print("--- Starting Padel Monitor ---")
+    proxy_configured = all([
+        os.environ.get("BRIGHTDATA_HOST"),
+        os.environ.get("BRIGHTDATA_PORT"),
+        os.environ.get("BRIGHTDATA_USERNAME"),
+        os.environ.get("BRIGHTDATA_PASSWORD"),
+    ])
+
     current_slots = get_current_slots()
-    
+
+    if current_slots is None:
+        if proxy_configured:
+            print("💥 Scraping FAILED with proxy configured. Exiting with error.")
+            sys.exit(1)
+        else:
+            print("ℹ️ No proxy configured and site is blocked — skipping update.")
+            return
+
     # Load previously seen
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, 'r') as f:
             try:
                 seen_slots = set(json.load(f))
-            except:
+            except Exception:
                 seen_slots = set()
     else:
         seen_slots = set()
@@ -178,7 +193,7 @@ def main():
         print("ℹ️ No new slots found.")
         # Create the file purely for initialization if it's missing
         if not os.path.exists(FEED_FILE):
-             update_files(set(), current_slots)
+            update_files(set(), current_slots)
 
 if __name__ == "__main__":
     main()
