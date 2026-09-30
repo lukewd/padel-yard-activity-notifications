@@ -32,6 +32,7 @@ TARGETS = [
     },
 ]
 URL = TARGETS[0]["url"]  # Channel link for the feed
+OCCASIONS_URL = "https://www.matchi.se/facilities/activityOccasions"  # Backs the 'Show more occasions' link
 LEGACY_LOCATION = "Wandsworth"  # Slots saved before multi-location support
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC")  # Push notifications via ntfy.sh (optional)
 STATE_FILE = "seen_dates.json"
@@ -50,31 +51,55 @@ def get_proxies():
     proxy_url = f"http://{user}:{password}@{host}:{port}"
     return {"http": proxy_url, "https": proxy_url}
 
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.9"
+}
+
+def fetch_html(url, proxies, params=None):
+    if proxies:
+        response = requests.get(url, headers=HEADERS, params=params, proxies=proxies, timeout=30, verify=False)
+    else:
+        response = requests.get(url, headers=HEADERS, params=params, timeout=30)
+    response.raise_for_status()
+    return BeautifulSoup(response.text, 'html.parser')
+
+def fetch_more_rows(container_row, proxies):
+    """The page only includes the first few occasions; the rest load via the 'Show more occasions' link."""
+    link = container_row.find("a", class_="load-activity-occasions")
+    if not link:
+        return []
+
+    loaded = int(link.get("data-loaded-count", 0))
+    total = int(link.get("data-total-count", 0))
+    rows = []
+    while loaded < total:
+        soup = fetch_html(OCCASIONS_URL, proxies, params={
+            "activityId": link.get("data-activity-id"),
+            "offset": loaded,
+            "max": total - loaded,
+        })
+        batch = soup.find_all("tr", class_="activity-occasion")
+        if not batch:
+            break
+        rows.extend(batch)
+        loaded += len(batch)
+    return rows
+
 def get_current_slots(target, proxies):
     """Returns the set of slots for one facility, or None if the page couldn't be fetched."""
     url = target["url"]
     location = target["location"]
     print(f"🔎 Visiting {url}...")
     
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9"
-    }
-
     try:
         if proxies:
             print("   🛡️ Using Bright Data Proxy...")
-            response = requests.get(url, headers=headers, proxies=proxies, timeout=30, verify=False)
-        else:
-            response = requests.get(url, headers=headers, timeout=30)
-        
-        response.raise_for_status()
+        soup = fetch_html(url, proxies)
         print("✅ Page loaded successfully.")
     except Exception as e:
         print(f"❌ Error fetching page: {e}")
         return None
-
-    soup = BeautifulSoup(response.text, 'html.parser')
     found_slots = set()
     
     print("--- Parsing HTML Tables ---")
@@ -98,8 +123,14 @@ def get_current_slots(target, proxies):
                 table = container_row.find("table", class_="activity-occasions")
                 
                 if table:
-                    # Find all rows (tr)
+                    # Find all rows (tr), including those behind 'Show more occasions'
                     rows = table.find_all("tr", class_="activity-occasion")
+                    try:
+                        rows += fetch_more_rows(container_row, proxies)
+                    except Exception as e:
+                        # Treat as a failed fetch so a partial list doesn't overwrite the state
+                        print(f"❌ Error loading more occasions for {anchor_id}: {e}")
+                        return None
                     
                     for row in rows:
                         date_tag = row.find("small")
