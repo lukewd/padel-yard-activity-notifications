@@ -6,6 +6,8 @@ import datetime
 import sys
 import urllib3
 import hashlib
+import smtplib
+from email.message import EmailMessage
 
 # Suppress the "InsecureRequest" warnings from the Proxy
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -35,6 +37,9 @@ URL = TARGETS[0]["url"]  # Channel link for the feed
 OCCASIONS_URL = "https://www.matchi.se/facilities/activityOccasions"  # Backs the 'Show more occasions' link
 LEGACY_LOCATION = "Wandsworth"  # Slots saved before multi-location support
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC")  # Push notifications via ntfy.sh (optional)
+GMAIL_EMAIL = os.environ.get("GMAIL_EMAIL")  # Email alerts via Gmail SMTP (optional)
+GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_SPECIFIC_PASSWORD")
+EMAIL_RECIPIENT = os.environ.get("EMAIL_RECIPIENT")
 STATE_FILE = "seen_dates.json"
 FEED_FILE = "feed.xml"
 
@@ -234,6 +239,40 @@ def send_push(new_slots):
         print(f"❌ Error sending push notification: {e}")
         return False
 
+def send_email(new_slots):
+    """Sends an email alert via Gmail. Returns False if it failed."""
+    if not all([GMAIL_EMAIL, GMAIL_APP_PASSWORD, EMAIL_RECIPIENT]):
+        print("ℹ️ Gmail secrets not set, skipping email.")
+        return True
+
+    sorted_slots = sorted(new_slots)
+    locations = [t for t in TARGETS if any(s.endswith(f" | {t['location']}") for s in new_slots)]
+
+    msg = EmailMessage()
+    msg["Subject"] = f"🎾 {len(new_slots)} new padel slot{'s' if len(new_slots) != 1 else ''}"
+    msg["From"] = GMAIL_EMAIL
+    msg["To"] = EMAIL_RECIPIENT
+    msg.set_content(
+        "New dates added:\n\n" + "\n".join(sorted_slots) + "\n\n"
+        + "\n".join([f"Book {t['location']}: {t['url']}" for t in locations])
+    )
+    msg.add_alternative(
+        "<h3>New Dates Added!</h3><ul>" + "".join([f"<li>{s}</li>" for s in sorted_slots]) + "</ul>"
+        + " ".join([f'<a href="{t["url"]}">Book {t["location"]}</a>' for t in locations]),
+        subtype="html",
+    )
+
+    try:
+        # Google shows app passwords with spaces; SMTP wants them without
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as smtp:
+            smtp.login(GMAIL_EMAIL, GMAIL_APP_PASSWORD.replace(" ", ""))
+            smtp.send_message(msg)
+        print("📧 Email sent.")
+        return True
+    except Exception as e:
+        print(f"❌ Error sending email: {e}")
+        return False
+
 def main():
     print("--- Starting Padel Monitor ---")
 
@@ -264,7 +303,9 @@ def main():
     if new_slots:
         print(f"🎉 FOUND {len(new_slots)} NEW SLOTS!")
         update_files(new_slots, current_slots)
-        if not send_push(new_slots):
+        push_ok = send_push(new_slots)
+        email_ok = send_email(new_slots)
+        if not (push_ok and email_ok):
             # Fail the job so the new state isn't committed and the next run retries
             sys.exit(1)
     else:
