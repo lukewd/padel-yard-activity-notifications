@@ -33,6 +33,7 @@ TARGETS = [
 ]
 URL = TARGETS[0]["url"]  # Channel link for the feed
 LEGACY_LOCATION = "Wandsworth"  # Slots saved before multi-location support
+NTFY_TOPIC = os.environ.get("NTFY_TOPIC")  # Push notifications via ntfy.sh (optional)
 STATE_FILE = "seen_dates.json"
 FEED_FILE = "feed.xml"
 
@@ -176,6 +177,32 @@ def update_files(new_slots, all_current_slots):
     
     print("💾 Files saved (Summary Mode).")
 
+def send_push(new_slots):
+    """Sends a push notification via ntfy. Returns False if it failed."""
+    if not NTFY_TOPIC:
+        print("ℹ️ NTFY_TOPIC not set, skipping push notification.")
+        return True
+
+    sorted_slots = sorted(new_slots)
+    body = "\n".join(sorted_slots)
+    # Tapping opens the page for the location with new slots (first one if both)
+    locations = [t for t in TARGETS if any(s.endswith(f" | {t['location']}") for s in new_slots)]
+    headers = {
+        "Title": f"{len(new_slots)} new padel slot{'s' if len(new_slots) != 1 else ''}",
+        "Tags": "tennis",
+        "Click": locations[0]["url"] if locations else URL,
+        "Actions": "; ".join([f"view, Book {t['location']}, {t['url']}" for t in locations]),
+    }
+
+    try:
+        response = requests.post(f"https://ntfy.sh/{NTFY_TOPIC}", data=body.encode("utf-8"), headers=headers, timeout=30)
+        response.raise_for_status()
+        print("📲 Push notification sent.")
+        return True
+    except Exception as e:
+        print(f"❌ Error sending push notification: {e}")
+        return False
+
 def main():
     print("--- Starting Padel Monitor ---")
 
@@ -206,6 +233,9 @@ def main():
     if new_slots:
         print(f"🎉 FOUND {len(new_slots)} NEW SLOTS!")
         update_files(new_slots, current_slots)
+        if not send_push(new_slots):
+            # Fail the job so the new state isn't committed and the next run retries
+            sys.exit(1)
     else:
         print("ℹ️ No new slots found.")
         # Create the file purely for initialization if it's missing
