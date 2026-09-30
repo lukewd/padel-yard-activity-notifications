@@ -11,12 +11,28 @@ import hashlib
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- CONFIGURATION ---
-URL = "https://www.matchi.se/facilities/g4pthepadelyard" 
-TARGET_ANCHORS = [
-    "ClassActivity-130961", 
-    "ClassActivity-130975", 
-    "ClassActivity-131169"
+# Each facility page and the ClassActivity anchors to watch on it
+TARGETS = [
+    {
+        "location": "Wandsworth",
+        "url": "https://www.matchi.se/facilities/g4pthepadelyard",
+        "anchors": [
+            "ClassActivity-130961",  # Oscar Marhuenda
+            "ClassActivity-130975",  # Oscar Marhuenda
+            "ClassActivity-131169",  # Oscar Marhuenda
+            "ClassActivity-141279",  # Lower Intermediate Group Lesson Levels 3-4
+        ],
+    },
+    {
+        "location": "Vauxhall",
+        "url": "https://www.matchi.se/facilities/g4pvauxhallpadelyard",
+        "anchors": [
+            "ClassActivity-134171",  # Lower Intermediate Group Lesson Level 3-4
+        ],
+    },
 ]
+URL = TARGETS[0]["url"]  # Channel link for the feed
+LEGACY_LOCATION = "Wandsworth"  # Slots saved before multi-location support
 STATE_FILE = "seen_dates.json"
 FEED_FILE = "feed.xml"
 
@@ -33,9 +49,11 @@ def get_proxies():
     proxy_url = f"http://{user}:{password}@{host}:{port}"
     return {"http": proxy_url, "https": proxy_url}
 
-def get_current_slots():
-    print(f"🔎 Visiting {URL}...")
-    proxies = get_proxies()
+def get_current_slots(target, proxies):
+    """Returns the set of slots for one facility, or None if the page couldn't be fetched."""
+    url = target["url"]
+    location = target["location"]
+    print(f"🔎 Visiting {url}...")
     
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
@@ -45,26 +63,28 @@ def get_current_slots():
     try:
         if proxies:
             print("   🛡️ Using Bright Data Proxy...")
-            response = requests.get(URL, headers=headers, proxies=proxies, timeout=30, verify=False)
+            response = requests.get(url, headers=headers, proxies=proxies, timeout=30, verify=False)
         else:
-            response = requests.get(URL, headers=headers, timeout=30)
+            response = requests.get(url, headers=headers, timeout=30)
         
         response.raise_for_status()
         print("✅ Page loaded successfully.")
     except Exception as e:
         print(f"❌ Error fetching page: {e}")
-        return set()
+        return None
 
     soup = BeautifulSoup(response.text, 'html.parser')
     found_slots = set()
     
     print("--- Parsing HTML Tables ---")
     
-    for anchor_id in TARGET_ANCHORS:
+    for anchor_id in target["anchors"]:
         # Find the Anchor Tag
         anchor = soup.find("a", attrs={"name": anchor_id})
         
-        if anchor:
+        if not anchor:
+            print(f"   ⚠️ {anchor_id} not found on {location} page")
+        else:
             # Find the container ROW immediately following the anchor
             container_row = anchor.find_next("div", class_="row")
             
@@ -90,12 +110,12 @@ def get_current_slots():
                             
                             # Clean string for the slot
                             full_slot = f"{date_str} @ {time_str}"
-                            # Unique ID includes the class title so we know which class it is
-                            unique_id = f"{full_slot} [{title_text}]"
+                            # Unique ID includes the class title and location so we know which class it is
+                            unique_id = f"{full_slot} [{title_text}] | {location}"
                             
                             found_slots.add(unique_id)
     
-    print(f"   -> Total slots found on page: {len(found_slots)}")
+    print(f"   -> Total slots found on {location} page: {len(found_slots)}")
     return found_slots
 
 def update_files(new_slots, all_current_slots):
@@ -107,7 +127,7 @@ def update_files(new_slots, all_current_slots):
     rss_header = f"""<?xml version="1.0" encoding="UTF-8" ?>
 <rss version="2.0">
 <channel>
- <title>Padel Monitor: Oscar Marhuenda</title>
+ <title>Padel Yard Monitor</title>
  <description>Availability Updates</description>
  <link>{URL}</link>
  <lastBuildDate>{datetime.datetime.now(datetime.timezone.utc).strftime('%a, %d %b %Y %H:%M:%S +0000')}</lastBuildDate>
@@ -127,11 +147,12 @@ def update_files(new_slots, all_current_slots):
         # We sort them so the email looks tidy
         sorted_slots = sorted(list(new_slots))
         description_html = "<h3>New Dates Added!</h3><ul>" + "".join([f"<li>{s}</li>" for s in sorted_slots]) + "</ul>"
+        book_links = " ".join([f'<a href="{t["url"]}">Book {t["location"]}</a>' for t in TARGETS])
         
         new_item_block = f"""
  <item>
   <title>🎾 {len(new_slots)} New Slots Available!</title>
-  <description><![CDATA[{description_html} <br/> <a href="{URL}">Book Now</a>]]></description>
+  <description><![CDATA[{description_html} <br/> {book_links}]]></description>
   <link>{URL}</link>
   <guid isPermaLink="false">{guid}</guid>
   <pubDate>{timestamp}</pubDate>
@@ -157,8 +178,7 @@ def update_files(new_slots, all_current_slots):
 
 def main():
     print("--- Starting Padel Monitor ---")
-    current_slots = get_current_slots()
-    
+
     # Load previously seen
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, 'r') as f:
@@ -168,6 +188,18 @@ def main():
                 seen_slots = set()
     else:
         seen_slots = set()
+
+    # Older entries have no location suffix; they all came from Wandsworth
+    seen_slots = {s if " | " in s else f"{s} | {LEGACY_LOCATION}" for s in seen_slots}
+
+    proxies = get_proxies()
+    current_slots = set()
+    for target in TARGETS:
+        slots = get_current_slots(target, proxies)
+        if slots is None:
+            # Fetch failed: keep what we'd seen here so it isn't re-announced next time
+            slots = {s for s in seen_slots if s.endswith(f" | {target['location']}")}
+        current_slots |= slots
 
     new_slots = current_slots - seen_slots
 
