@@ -32,6 +32,7 @@ jobs:
           BRIGHTDATA_PORT: ${{ secrets.BRIGHTDATA_PORT }}
           BRIGHTDATA_USERNAME: ${{ secrets.BRIGHTDATA_USERNAME }}
           BRIGHTDATA_PASSWORD: ${{ secrets.BRIGHTDATA_PASSWORD }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         run: python feed_generator.py
 
       - name: Commit and Push
